@@ -14,7 +14,7 @@ def _requests_session(retries=3, backoff=0.6, timeout=15):
     return s
 
 
-def lookup(username, clan_name):
+def lookup(username, clan_name, debug=False):
     """Search royaleapi for a player by username, find the profile that matches clan_name,
     then parse the player's decks and return the 8 card names from the most used deck.
 
@@ -33,53 +33,99 @@ def lookup(username, clan_name):
 
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    # Find candidate profile links. Look for hrefs that contain '/player/'
+    # Prefer structured search-result entries when present (more reliable)
     candidates = []
-    for a in soup.find_all('a', href=True):
+    for entry in soup.find_all(True, class_=lambda c: c and 'player_search_results__result_container' in c):
+        # each entry contains an <a class="header" href="/player/...">display name</a>
+        a = entry.find('a', class_='header')
+        if not a or not a.has_attr('href'):
+            continue
         href = a['href']
-        if '/player/' in href:
-            # try to read clan text nearby
-            text = (a.get_text(separator=' ', strip=True) or '').strip()
-            # try to find clan name in ancestor
-            clan = None
-            parent = a.parent
-            for _ in range(3):
-                if parent is None:
-                    break
-                # look for an element that contains 'clan' or similar
-                txt = parent.get_text(separator=' ', strip=True)
-                if txt and clan_name.lower() in txt.lower():
-                    clan = clan_name
-                    break
-                parent = parent.parent
-            candidates.append((href, text, clan))
+        display = a.get_text(separator=' ', strip=True)
+        # look for a clan anchor within the entry
+        clan_anchor = entry.find('a', href=lambda h: h and h.startswith('/clan/'))
+        clan_text = None
+        if clan_anchor:
+            # clan text often contains name + tag, e.g. "L-O-A-D-I-N-G  #PJRC9CGR"
+            clan_text = clan_anchor.get_text(separator=' ', strip=True)
+        candidates.append((href, display, clan_text))
 
-    # Prefer candidates that matched clan in nearby text
+    # If we didn't find structured entries, fallback to previous broad scan
+    if not candidates:
+        for a in soup.find_all('a', href=True):
+            href = a['href']
+            if '/player/' in href:
+                text = (a.get_text(separator=' ', strip=True) or '').strip()
+                # try to find clan name in ancestor
+                clan = None
+                parent = a.parent
+                for _ in range(3):
+                    if parent is None:
+                        break
+                    txt = parent.get_text(separator=' ', strip=True)
+                    if txt and clan_name.lower() in txt.lower():
+                        clan = clan_name
+                        break
+                    parent = parent.parent
+                candidates.append((href, text, clan))
+
+    if debug:
+        print(f"[debug] found {len(candidates)} candidate links")
+        for i, (href, text, clan) in enumerate(candidates[:20]):
+            print(f"[debug] candidate {i}: href={href} clanNearby={bool(clan)} text_snippet={repr(text[:120])}")
+
+    # Prefer candidates that include a clan anchor in the search result and match exactly
+    def _normalize(s):
+        import re
+        if not s:
+            return ''
+        return re.sub(r'[^a-z0-9]', '', s.lower())
+
     profile_url = None
-    for href, text, clan in candidates:
-        if clan:
-            profile_url = urljoin(base, href)
-            break
-
-    # Fallback: pick first candidate whose visible text contains the clan name
-    if profile_url is None:
-        for href, text, clan in candidates:
-            if clan_name.lower() in (text or '').lower():
+    for href, display, clan_text in candidates:
+        if clan_text:
+            # clan_text often like "L-O-A-D-I-N-G  #PJRC9CGR" -> take part before tag
+            clan_part = clan_text.split('#')[0].strip()
+            if _normalize(clan_part) == _normalize(clan_name) or _normalize(clan_name) in _normalize(clan_part):
                 profile_url = urljoin(base, href)
+                if debug:
+                    print(f"[debug] selected by clan_text match: {clan_text} -> {profile_url}")
                 break
 
-    # If still not found, try to load each candidate page and inspect clan there
+    # Fallback: pick first candidate whose visible text contains the clan name (less strict)
     if profile_url is None:
-        for href, text, clan in candidates:
+        for href, display, clan_text in candidates:
+            if clan_name.lower() in (display or '').lower():
+                profile_url = urljoin(base, href)
+                if debug:
+                    print(f"[debug] selected by display match: {display} -> {profile_url}")
+                break
+
+    # If still not found, load candidate profile pages and inspect the profile header for a clan link
+    if profile_url is None:
+        for href, display, clan_text in candidates:
             url = urljoin(base, href)
             try:
                 r = session.get(url, timeout=session.request_timeout)
                 if r.status_code != 200:
                     continue
                 psoup = BeautifulSoup(r.text, 'html.parser')
+                # look for a clan link in the profile header
+                clan_anchor = psoup.find('a', href=lambda h: h and h.startswith('/clan/'))
+                if clan_anchor:
+                    page_clan = clan_anchor.get_text(separator=' ', strip=True)
+                    page_clan_part = page_clan.split('#')[0].strip()
+                    if _normalize(page_clan_part) == _normalize(clan_name) or _normalize(clan_name) in _normalize(page_clan_part):
+                        profile_url = url
+                        if debug:
+                            print(f"[debug] matched clan on profile page: {url} -> {page_clan}")
+                        break
+                # as a looser fallback, inspect page text
                 page_text = psoup.get_text(separator=' ', strip=True)
                 if clan_name.lower() in page_text.lower():
                     profile_url = url
+                    if debug:
+                        print(f"[debug] matched clan in page text: {url}")
                     break
             except Exception:
                 continue
@@ -88,11 +134,45 @@ def lookup(username, clan_name):
     if profile_url is None:
         raise RuntimeError("Could not find a player profile matching the clan")
 
-    # Load profile page and find decks
+    if debug:
+        print(f"[debug] selected profile_url: {profile_url}")
+
+    # Load profile page and try to reach the "Decks" view.
+    # Many player pages expose decks under a separate subpath (/player/<tag>/decks).
+    # Try to follow an explicit "decks" link from the profile page first, otherwise
+    # fall back to appending '/decks' to the profile URL.
     r = session.get(profile_url, timeout=session.request_timeout)
     if r.status_code != 200:
         raise RuntimeError(f"Failed loading profile page: {r.status_code}")
     psoup = BeautifulSoup(r.text, 'html.parser')
+
+    # look for an explicit decks link on the profile (safer than guessing URL)
+    decks_url = None
+    decks_link = psoup.find('a', href=lambda h: h and h.endswith('/decks') and '/player/' in h)
+    if decks_link and decks_link.has_attr('href'):
+        decks_url = urljoin(base, decks_link['href'])
+        if debug:
+            print(f"[debug] found decks link on profile page: {decks_url}")
+    else:
+        # fallback: append '/decks' to profile url (handle trailing slash)
+        decks_url = profile_url.rstrip('/') + '/decks'
+        if debug:
+            print(f"[debug] falling back to decks_url: {decks_url}")
+
+    # Fetch the decks page (if different from profile_url)
+    try:
+        r2 = session.get(decks_url, timeout=session.request_timeout)
+        if r2.status_code == 200:
+            psoup = BeautifulSoup(r2.text, 'html.parser')
+            if debug:
+                print(f"[debug] loaded decks page: {decks_url}")
+        else:
+            if debug:
+                print(f"[debug] decks page request returned {r2.status_code}, using profile page HTML")
+    except Exception:
+        if debug:
+            print("[debug] exception fetching decks page, using profile page HTML")
+        # keep original psoup
 
     # Search for deck containers: try common patterns
     deck_containers = []
@@ -111,6 +191,12 @@ def lookup(username, clan_name):
                 deck_containers.append((div, imgs))
                 if len(deck_containers) >= 6:
                     break
+
+    if debug:
+        print(f"[debug] found {len(deck_containers)} deck candidate containers")
+        for i, (div, imgs) in enumerate(deck_containers[:6]):
+            sample_srcs = [img.get('alt') or img.get('title') or img.get('src') for img in imgs[:8]]
+            print(f"[debug] container {i} has {len(imgs)} images; sample: {sample_srcs}")
 
     if not deck_containers:
         raise RuntimeError('No deck containers found on profile page')
@@ -134,6 +220,11 @@ def lookup(username, clan_name):
             best_score = score
             best_deck = imgs[:8]
 
+    if debug:
+        print(f"[debug] best_score={best_score}")
+        if best_deck is not None:
+            print("[debug] best_deck sample srcs:", [img.get('alt') or img.get('title') or img.get('src') for img in best_deck])
+
     # If no usage metrics found, pick first deck's first 8 images
     if best_deck is None:
         best_deck = deck_containers[0][1][:8]
@@ -152,13 +243,20 @@ def lookup(username, clan_name):
             from os.path import basename
             name = basename(src).split('.')[0].replace('-', ' ').replace('_', ' ').strip()
         cards.append(name)
-
     # Ensure we return exactly 8 items
+    if debug:
+        print(f"[debug] extracted card names: {cards}")
     if len(cards) >= 8:
         return cards[:8]
     else:
         raise RuntimeError('Could not extract 8 card names from deck')
 
 # usage example
-#cards = lookup('Dhanika', 'Dababy Lets Go')
-#rint(cards)
+cards = lookup('-Viper-', 'L-O-A-D-I-N-G', debug=False)
+print(cards)
+
+card1 = lookup('Dhanika', 'Dababy Lets Go', debug=False)
+print(card1)
+
+card2 = lookup('moose', 'L-O-A-D-I-N-G', debug=False)
+print(card2)
