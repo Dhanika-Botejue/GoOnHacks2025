@@ -5,3 +5,4 @@ numpy
 imutils
 inference_sdk
 dotenv
+pynput
