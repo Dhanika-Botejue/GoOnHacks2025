@@ -1,0 +1,7 @@
+mediapipe
+pyautogui
+opencv-python
+numpy
+imutils
+inference_sdk
+dotenv
