@@ -3,6 +3,8 @@ import mediapipe as mp
 import pyautogui
 import os
 import numpy as np
+from collections import deque
+from pynput import keyboard
 from dotenv import load_dotenv
 from inference_sdk import InferenceHTTPClient
 
@@ -29,6 +31,23 @@ MODEL_ID = "tongue-wltgn/2"
 cap = cv2.VideoCapture(0)
 screen_w, screen_h = pyautogui.size()
 
+# 4 card positions
+card_1_x = 622
+card_1_y = 752
+
+card_2_x = 684
+card_2_y = 752
+
+card_3_x = 752
+card_3_y = 752
+
+card_4_x = 819
+card_4_y = 752
+
+# Middle center position
+middle_center_x = 691
+middle_center_y = 481
+
 # Mouse control settings
 SENSITIVITY = 0.5  # mouse movement sensitivity
 SMOOTHING_FRAMES = 5  # Number of frames to average for smoother movement
@@ -41,8 +60,42 @@ vector_buffer = []
 frame_buffer = []
 last_tongue_tip = None  # Keep last detection while collecting new frames
 mouth_was_open = False
-current_mouse_x, current_mouse_y = screen_w // 2, screen_h // 2
+current_card = 1  # Track current card (1-4)
+current_mouse_x, current_mouse_y = card_1_x, card_1_y
 pyautogui.moveTo(current_mouse_x, current_mouse_y)
+
+# Global keyboard input handling
+key_press_queue = deque(maxlen=10)  # Thread-safe queue for key presses
+keyboard_listener = None
+running = True
+
+def on_key_press(key):
+    """Handle global key press events"""
+    try:
+        if hasattr(key, 'char') and key.char:
+            key_press_queue.append(key.char.lower())
+    except AttributeError:
+        pass
+
+def start_keyboard_listener():
+    """Start the global keyboard listener in a separate thread"""
+    global keyboard_listener
+    keyboard_listener = keyboard.Listener(on_press=on_key_press)
+    keyboard_listener.start()
+    return keyboard_listener
+
+def get_card_position(card_num):
+    """Get the x, y coordinates for a given card number (1-4)"""
+    if card_num == 1:
+        return card_1_x, card_1_y
+    elif card_num == 2:
+        return card_2_x, card_2_y
+    elif card_num == 3:
+        return card_3_x, card_3_y
+    elif card_num == 4:
+        return card_4_x, card_4_y
+    else:
+        return card_1_x, card_1_y  # Default to card 1
 
 def detect_tongue_tip(frame):
     """Run Roboflow inference to detect tongue tip coordinates on a single frame"""
@@ -148,8 +201,13 @@ def move_mouse_from_vector(vector, frame_shape):
     pyautogui.moveTo(new_x, new_y, duration=0.01)
     current_mouse_x, current_mouse_y = new_x, new_y
 
+# Start global keyboard listener
+print("Starting global keyboard listener...")
+start_keyboard_listener()
+print("Keyboard listener started. Press 'A' and 'D' keys globally to navigate cards.")
+
 # Main loop
-while True:
+while running:
     ret, frame = cap.read()
     if not ret:
         break
@@ -161,6 +219,7 @@ while True:
     tongue_tip_x, tongue_tip_y, tongue_confidence = None, None, 0
     mouth_center_px = None
     vector = None
+    mouth_is_closed = False  # Track if mouth is closed in current frame
 
     if results.multi_face_landmarks:
         for face_landmarks in results.multi_face_landmarks:
@@ -188,6 +247,9 @@ while True:
 
             # If mouth is open, detect tongue and control mouse
             if mouth_is_open:
+                mouth_is_closed = False
+                # Clear any accumulated key presses when mouth opens
+                key_press_queue.clear()
                 mouth_was_open = True
                 
                 # Add frame to buffer for multi-frame inference
@@ -238,24 +300,55 @@ while True:
                     cv2.putText(frame, "MOUTH OPEN - Detecting tongue...", (30, 50),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
             else:
-                # Mouth closed - reset mouse to center
+                # Mouth closed - move mouse to card position
+                mouth_is_closed = True
                 if mouth_was_open:
                     mouth_was_open = False
                     vector_buffer.clear()  # Clear smoothing buffer
                     frame_buffer.clear()  # Clear frame buffer
                     last_tongue_tip = None  # Clear last detection
-                    current_mouse_x, current_mouse_y = screen_w // 2, screen_h // 2
+                    current_card = 1  # Reset to card 1 when mouth closes
+                    current_mouse_x, current_mouse_y = get_card_position(current_card)
                     pyautogui.moveTo(current_mouse_x, current_mouse_y)
                 
-                cv2.putText(frame, "MOUTH CLOSED - MOUSE CENTERED", (30, 50),
+                # Display current card info
+                cv2.putText(frame, f"MOUTH CLOSED - CARD {current_card}", (30, 50),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                cv2.putText(frame, "Press 'A' for left, 'D' for right", (30, 85),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
     else:
         cv2.putText(frame, "No face detected", (30, 50),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
     cv2.imshow("Tongue Mouse Control", frame)
-    if cv2.waitKey(1) & 0xFF == 27:
+    key = cv2.waitKey(1) & 0xFF
+    
+    # Handle keyboard input for card navigation (only when mouth is closed)
+    # Check global keyboard input queue
+    if mouth_is_closed and len(key_press_queue) > 0:
+        pressed_key = key_press_queue.popleft()  # Get and remove the first key from queue
+        if pressed_key == 'a':
+            # Move to previous card (left)
+            if current_card > 1:
+                current_card -= 1
+                current_mouse_x, current_mouse_y = get_card_position(current_card)
+                pyautogui.moveTo(current_mouse_x, current_mouse_y)
+                print(f"Moved to Card {current_card}")
+        elif pressed_key == 'd':
+            # Move to next card (right)
+            if current_card < 4:
+                current_card += 1
+                current_mouse_x, current_mouse_y = get_card_position(current_card)
+                pyautogui.moveTo(current_mouse_x, current_mouse_y)
+                print(f"Moved to Card {current_card}")
+    
+    if key == 27:  # ESC key (still works from OpenCV window)
+        running = False
         break
 
+# Cleanup
+running = False
+if keyboard_listener:
+    keyboard_listener.stop()
 cap.release()
 cv2.destroyAllWindows()
