@@ -371,11 +371,11 @@ def move_mouse_from_vector(vector, frame_shape):
     current_mouse_x, current_mouse_y = new_x, new_y
 
 # Start global keyboard listener
-print("Starting global keyboard listener...")
+#print("Starting global keyboard listener...")
 start_keyboard_listener()
-print("Keyboard listener started. Press 'A'/'D' to navigate cards and 'P' to toggle programmatic controls on/off.")
+#print("Keyboard listener started. Press 'A'/'D' to navigate cards and 'P' to toggle programmatic controls on/off.")
 start_mouse_listener()
-print("Mouse listener started (for calibration mode - press 'C' to begin)")
+#print("Mouse listener started (for calibration mode - press 'C' to begin)")
 
 # Main loop
 while running:
@@ -424,12 +424,12 @@ while running:
                 if mouth_was_closed and not clicked_on_open:
                     # Click once at current card position (if allowed)
                     safe_click(current_mouse_x, current_mouse_y)
-                    print(f"Clicked at card position: ({current_mouse_x}, {current_mouse_y})")
+                    #print(f"Clicked at card position: ({current_mouse_x}, {current_mouse_y})")
 
                     # Move mouse to middle center
                     safe_moveTo(middle_center_x, middle_center_y)
                     current_mouse_x, current_mouse_y = middle_center_x, middle_center_y
-                    print(f"Moved to center: ({middle_center_x}, {middle_center_y})")
+                    #print(f"Moved to center: ({middle_center_x}, {middle_center_y})")
 
                     clicked_on_open = True  # Mark that we've clicked for this opening
                 
@@ -492,7 +492,7 @@ while running:
                     # Mouth just closed after being open (mouse was controlled with tongue)
                     # Click at current mouse position (where user moved it with tongue)
                     safe_click(current_mouse_x, current_mouse_y)
-                    print(f"Clicked at current mouse position: ({current_mouse_x}, {current_mouse_y})")
+                    #print(f"Clicked at current mouse position: ({current_mouse_x}, {current_mouse_y})")
                     
                     mouth_was_open = False
                     vector_buffer.clear()  # Clear smoothing buffer
@@ -501,7 +501,7 @@ while running:
                     current_card = 1  # Reset to card 1 when mouth closes
                     current_mouse_x, current_mouse_y = get_card_position(current_card)
                     safe_moveTo(current_mouse_x, current_mouse_y)
-                    print(f"Moved to card 1 position: ({current_mouse_x}, {current_mouse_y})")
+                    #print(f"Moved to card 1 position: ({current_mouse_x}, {current_mouse_y})")
                     clicked_on_open = False  # Reset click flag for next mouth opening
                 
                 mouth_was_closed = True  # Update tracking flag
@@ -533,14 +533,14 @@ while running:
                 current_card -= 1
                 current_mouse_x, current_mouse_y = get_card_position(current_card)
                 safe_moveTo(current_mouse_x, current_mouse_y)
-                print(f"Moved to Card {current_card}")
+                #print(f"Moved to Card {current_card}")
         elif pressed_key == 'd':
             # Move to next card (right)
             if current_card < 4:
                 current_card += 1
                 current_mouse_x, current_mouse_y = get_card_position(current_card)
                 safe_moveTo(current_mouse_x, current_mouse_y)
-                print(f"Moved to Card {current_card}")
+                #print(f"Moved to Card {current_card}")
     
     if key == 27:  # ESC key (still works from OpenCV window)
         running = False
