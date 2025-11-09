@@ -118,11 +118,43 @@ calibration_names = [
     "card_4",
 ]
 
+# Screenshot region selection (press 'R' to start, click two corners, then 'S' to save)
+screenshot_region = None  # (x, y, w, h) in screen coordinates
+select_region_mode = False
+select_points = []  # will hold two (x,y) tuples
+
 def on_key_press(key):
     """Handle global key press events"""
     try:
         if hasattr(key, 'char') and key.char:
             ch = key.char.lower()
+            # 'R' - region select should always work: start/cancel region selection
+            if ch == 'r':
+                global select_region_mode, select_points
+                if select_region_mode:
+                    select_region_mode = False
+                    select_points = []
+                    print("Region selection cancelled.")
+                else:
+                    select_region_mode = True
+                    select_points = []
+                    print("Region selection started: click top-left and bottom-right corners.")
+                return
+
+            # 'S' - take screenshot of selected region (or fallback) always
+            if ch == 's':
+                try:
+                    from datetime import datetime
+                    region = screenshot_region if screenshot_region is not None else (0, 0, 400, 150)
+                    os.makedirs('captures', exist_ok=True)
+                    img = pyautogui.screenshot(region=region)
+                    fname = f"captures/player_name_{datetime.now():%Y%m%d_%H%M%S}.png"
+                    img.save(fname)
+                    print(f"Saved screenshot to {fname} (region={region})")
+                except Exception as e:
+                    print(f"Screenshot failed: {e}")
+                return
+
             # 'C' should always be available to start/cancel calibration regardless of controls state
             if ch == 'c':
                 global calibration_mode, calibration_points
@@ -135,6 +167,7 @@ def on_key_press(key):
                     calibration_points = []
                     print("Calibration started: click 5 positions in order: middle_center, card1, card2, card3, card4")
                 return
+
             # Toggle programmatic controls immediately on 'p'
             if ch == 'p':
                 toggle_controls()
@@ -144,8 +177,26 @@ def on_key_press(key):
         pass
 
 def on_click(x, y, button, pressed):
-    """Global mouse click handler: used for calibration to capture positions."""
-    global calibration_mode, calibration_points
+    """Global mouse click handler: used for calibration and region selection to capture positions."""
+    global calibration_mode, calibration_points, select_region_mode, select_points, screenshot_region
+    # If in region selection mode, capture region corners first
+    if select_region_mode and pressed:
+        select_points.append((int(x), int(y)))
+        print(f"Region selection point {len(select_points)}: ({int(x)}, {int(y)})")
+        if len(select_points) >= 2:
+            x1, y1 = select_points[0]
+            x2, y2 = select_points[1]
+            left = min(x1, x2)
+            top = min(y1, y2)
+            width = abs(x2 - x1)
+            height = abs(y2 - y1)
+            screenshot_region = (left, top, width, height)
+            select_region_mode = False
+            select_points = []
+            print(f"Screenshot region set to: {screenshot_region}")
+        return
+
+    # Calibration handling (only when calibration mode active)
     if not calibration_mode:
         return
     # Only capture on press (not release)
@@ -184,7 +235,7 @@ def start_mouse_listener():
     return mouse_listener
 
 def start_keyboard_listener():
-    """Start the global keyboard listener in a separate thread"""
+    """Start the glorbsal keyboard listener in a separate thread"""
     global keyboard_listener
     keyboard_listener = keyboard.Listener(on_press=on_key_press)
     keyboard_listener.start()
@@ -244,7 +295,6 @@ def detect_tongue_tip_multi_frame(frames):
     return None, None, 0
 
 def calculate_vector(mouth_center, tongue_tip, frame_shape):
-    """Calculate vector from mouth center to tongue tip"""
     if tongue_tip[0] is None or tongue_tip[1] is None:
         return None
     
@@ -454,7 +504,7 @@ while running:
 
     # If controls are disabled, show overlay text to inform user
     if not controls_enabled:
-        cv2.putText(frame, "CONTROLS DISABLED - press 'P' to enable, 'C' to calibrate", (30, 115),
+        cv2.putText(frame, "CONTROLS DISABLED - press 'P' to enable, 'C' to calibrate, 'R' to select region, 'S' to screenshot", (30, 115),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
     cv2.imshow("Tongue Mouse Control", frame)
