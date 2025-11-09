@@ -4,7 +4,7 @@ import pyautogui
 import os
 import numpy as np
 from collections import deque
-from pynput import keyboard
+from pynput import keyboard, mouse
 from dotenv import load_dotenv
 from inference_sdk import InferenceHTTPClient
 
@@ -103,13 +103,38 @@ safe_moveTo(current_mouse_x, current_mouse_y)
 # Global keyboard input handling
 key_press_queue = deque(maxlen=10)  # Thread-safe queue for key presses
 keyboard_listener = None
+mouse_listener = None
 running = True
+
+# Calibration mode for configuring click positions
+calibration_mode = False
+calibration_expected = 5
+calibration_points = []
+calibration_names = [
+    "middle_center",
+    "card_1",
+    "card_2",
+    "card_3",
+    "card_4",
+]
 
 def on_key_press(key):
     """Handle global key press events"""
     try:
         if hasattr(key, 'char') and key.char:
             ch = key.char.lower()
+            # 'C' should always be available to start/cancel calibration regardless of controls state
+            if ch == 'c':
+                global calibration_mode, calibration_points
+                if calibration_mode:
+                    calibration_mode = False
+                    calibration_points = []
+                    print("Calibration cancelled.")
+                else:
+                    calibration_mode = True
+                    calibration_points = []
+                    print("Calibration started: click 5 positions in order: middle_center, card1, card2, card3, card4")
+                return
             # Toggle programmatic controls immediately on 'p'
             if ch == 'p':
                 toggle_controls()
@@ -117,6 +142,46 @@ def on_key_press(key):
                 key_press_queue.append(ch)
     except AttributeError:
         pass
+
+def on_click(x, y, button, pressed):
+    """Global mouse click handler: used for calibration to capture positions."""
+    global calibration_mode, calibration_points
+    if not calibration_mode:
+        return
+    # Only capture on press (not release)
+    if pressed:
+        calibration_points.append((int(x), int(y)))
+        idx = len(calibration_points) - 1
+        name = calibration_names[idx] if idx < len(calibration_names) else f"point_{idx}"
+        print(f"Calibration click {idx+1}: {name} = ({int(x)}, {int(y)})")
+        # Assign to the corresponding global variables when captured
+        if idx == 0:
+            global middle_center_x, middle_center_y
+            middle_center_x, middle_center_y = int(x), int(y)
+        elif idx == 1:
+            global card_1_x, card_1_y
+            card_1_x, card_1_y = int(x), int(y)
+        elif idx == 2:
+            global card_2_x, card_2_y
+            card_2_x, card_2_y = int(x), int(y)
+        elif idx == 3:
+            global card_3_x, card_3_y
+            card_3_x, card_3_y = int(x), int(y)
+        elif idx == 4:
+            global card_4_x, card_4_y
+            card_4_x, card_4_y = int(x), int(y)
+
+        # Finish calibration when we have enough points
+        if len(calibration_points) >= calibration_expected:
+            calibration_mode = False
+            print("Calibration complete.")
+
+def start_mouse_listener():
+    """Start a global mouse listener in a separate thread."""
+    global mouse_listener
+    mouse_listener = mouse.Listener(on_click=on_click)
+    mouse_listener.start()
+    return mouse_listener
 
 def start_keyboard_listener():
     """Start the global keyboard listener in a separate thread"""
@@ -246,6 +311,8 @@ def move_mouse_from_vector(vector, frame_shape):
 print("Starting global keyboard listener...")
 start_keyboard_listener()
 print("Keyboard listener started. Press 'A'/'D' to navigate cards and 'P' to toggle programmatic controls on/off.")
+start_mouse_listener()
+print("Mouse listener started (for calibration mode - press 'C' to begin)")
 
 # Main loop
 while running:
@@ -387,7 +454,7 @@ while running:
 
     # If controls are disabled, show overlay text to inform user
     if not controls_enabled:
-        cv2.putText(frame, "CONTROLS DISABLED - press 'P' to enable", (30, 115),
+        cv2.putText(frame, "CONTROLS DISABLED - press 'P' to enable, 'C' to calibrate", (30, 115),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
     cv2.imshow("Tongue Mouse Control", frame)
