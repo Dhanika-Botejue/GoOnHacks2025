@@ -7,7 +7,8 @@ from collections import deque
 from pynput import keyboard, mouse
 from dotenv import load_dotenv
 from inference_sdk import InferenceHTTPClient
-
+from lookup import lookup
+from text_extract import detect_text
 # Load environment variables
 load_dotenv()
 
@@ -151,6 +152,18 @@ def on_key_press(key):
                     fname = f"captures/player_name_{datetime.now():%Y%m%d_%H%M%S}.png"
                     img.save(fname)
                     print(f"Saved screenshot to {fname} (region={region})")
+                    
+                    # call image to text API function here
+                    try:
+                        username, clan = detect_text(fname)
+                    except:
+                        print("ERROR: username/clan extraction error")
+                    
+                    print("Image to text result:", (username, clan))
+
+                    # call lookup person function with clan name and username here
+                    cards = lookup(username, clan, debug=False)
+                    print("Cards:", cards)
                 except Exception as e:
                     print(f"Screenshot failed: {e}")
                 return
