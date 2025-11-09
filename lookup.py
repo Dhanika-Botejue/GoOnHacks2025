@@ -252,6 +252,7 @@ def lookup(username, clan_name, debug=False):
         raise RuntimeError('Could not extract 8 card names from deck')
 
 # usage example
+"""
 cards = lookup('-Viper-', 'L-O-A-D-I-N-G', debug=False)
 print(cards)
 
@@ -260,3 +261,4 @@ print(card1)
 
 card2 = lookup('moose', 'L-O-A-D-I-N-G', debug=False)
 print(card2)
+"""
