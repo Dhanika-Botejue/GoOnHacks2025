@@ -56,6 +56,40 @@ FRAMES_PER_INFERENCE = 1  # Number of frames to collect before running inference
 
 # Vector smoothing buffer
 vector_buffer = []
+# Control toggle: when False, all programmatic control (mouse moves/clicks) is suppressed
+controls_enabled = True
+
+def enable_controls():
+    global controls_enabled
+    controls_enabled = True
+    print("Controls ENABLED")
+
+def disable_controls():
+    global controls_enabled
+    controls_enabled = False
+    print("Controls DISABLED")
+
+def toggle_controls():
+    if controls_enabled:
+        disable_controls()
+    else:
+        enable_controls()
+
+def safe_moveTo(x, y, duration=0.01):
+    """Move the mouse only when controls are enabled."""
+    if controls_enabled:
+        pyautogui.moveTo(x, y, duration=duration)
+
+def safe_click(x=None, y=None):
+    """Click only when controls are enabled. If x/y provided, click there."""
+    if not controls_enabled:
+        # suppressed
+        return
+    if x is None or y is None:
+        pyautogui.click()
+    else:
+        pyautogui.click(x, y)
+
 # Frame buffer for multi-frame inference
 frame_buffer = []
 last_tongue_tip = None  # Keep last detection while collecting new frames
@@ -64,7 +98,7 @@ mouth_was_closed = True  # Track if mouth was closed in previous frame
 clicked_on_open = False  # Track if we've clicked for this mouth opening event
 current_card = 1  # Track current card (1-4)
 current_mouse_x, current_mouse_y = card_1_x, card_1_y
-pyautogui.moveTo(current_mouse_x, current_mouse_y)
+safe_moveTo(current_mouse_x, current_mouse_y)
 
 # Global keyboard input handling
 key_press_queue = deque(maxlen=10)  # Thread-safe queue for key presses
@@ -75,7 +109,12 @@ def on_key_press(key):
     """Handle global key press events"""
     try:
         if hasattr(key, 'char') and key.char:
-            key_press_queue.append(key.char.lower())
+            ch = key.char.lower()
+            # Toggle programmatic controls immediately on 'p'
+            if ch == 'p':
+                toggle_controls()
+            else:
+                key_press_queue.append(ch)
     except AttributeError:
         pass
 
@@ -199,14 +238,14 @@ def move_mouse_from_vector(vector, frame_shape):
     new_x = max(0, min(screen_w - 1, new_x))
     new_y = max(0, min(screen_h - 1, new_y))
     
-    # Move mouse
-    pyautogui.moveTo(new_x, new_y, duration=0.01)
+    # Move mouse (only if controls enabled)
+    safe_moveTo(new_x, new_y, duration=0.01)
     current_mouse_x, current_mouse_y = new_x, new_y
 
 # Start global keyboard listener
 print("Starting global keyboard listener...")
 start_keyboard_listener()
-print("Keyboard listener started. Press 'A' and 'D' keys globally to navigate cards.")
+print("Keyboard listener started. Press 'A'/'D' to navigate cards and 'P' to toggle programmatic controls on/off.")
 
 # Main loop
 while running:
@@ -253,15 +292,15 @@ while running:
                 
                 # Detect transition from closed to open (mouth just opened)
                 if mouth_was_closed and not clicked_on_open:
-                    # Click once at current card position
-                    pyautogui.click(current_mouse_x, current_mouse_y)
+                    # Click once at current card position (if allowed)
+                    safe_click(current_mouse_x, current_mouse_y)
                     print(f"Clicked at card position: ({current_mouse_x}, {current_mouse_y})")
-                    
+
                     # Move mouse to middle center
-                    pyautogui.moveTo(middle_center_x, middle_center_y)
+                    safe_moveTo(middle_center_x, middle_center_y)
                     current_mouse_x, current_mouse_y = middle_center_x, middle_center_y
                     print(f"Moved to center: ({middle_center_x}, {middle_center_y})")
-                    
+
                     clicked_on_open = True  # Mark that we've clicked for this opening
                 
                 # Clear any accumulated key presses when mouth opens
@@ -322,7 +361,7 @@ while running:
                 if mouth_was_open:
                     # Mouth just closed after being open (mouse was controlled with tongue)
                     # Click at current mouse position (where user moved it with tongue)
-                    pyautogui.click(current_mouse_x, current_mouse_y)
+                    safe_click(current_mouse_x, current_mouse_y)
                     print(f"Clicked at current mouse position: ({current_mouse_x}, {current_mouse_y})")
                     
                     mouth_was_open = False
@@ -331,7 +370,7 @@ while running:
                     last_tongue_tip = None  # Clear last detection
                     current_card = 1  # Reset to card 1 when mouth closes
                     current_mouse_x, current_mouse_y = get_card_position(current_card)
-                    pyautogui.moveTo(current_mouse_x, current_mouse_y)
+                    safe_moveTo(current_mouse_x, current_mouse_y)
                     print(f"Moved to card 1 position: ({current_mouse_x}, {current_mouse_y})")
                     clicked_on_open = False  # Reset click flag for next mouth opening
                 
@@ -346,6 +385,11 @@ while running:
         cv2.putText(frame, "No face detected", (30, 50),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
+    # If controls are disabled, show overlay text to inform user
+    if not controls_enabled:
+        cv2.putText(frame, "CONTROLS DISABLED - press 'P' to enable", (30, 115),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+
     cv2.imshow("Tongue Mouse Control", frame)
     key = cv2.waitKey(1) & 0xFF
     
@@ -358,14 +402,14 @@ while running:
             if current_card > 1:
                 current_card -= 1
                 current_mouse_x, current_mouse_y = get_card_position(current_card)
-                pyautogui.moveTo(current_mouse_x, current_mouse_y)
+                safe_moveTo(current_mouse_x, current_mouse_y)
                 print(f"Moved to Card {current_card}")
         elif pressed_key == 'd':
             # Move to next card (right)
             if current_card < 4:
                 current_card += 1
                 current_mouse_x, current_mouse_y = get_card_position(current_card)
-                pyautogui.moveTo(current_mouse_x, current_mouse_y)
+                safe_moveTo(current_mouse_x, current_mouse_y)
                 print(f"Moved to Card {current_card}")
     
     if key == 27:  # ESC key (still works from OpenCV window)
