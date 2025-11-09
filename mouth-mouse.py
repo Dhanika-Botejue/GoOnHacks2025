@@ -320,6 +320,11 @@ while running:
                 # Mouth closed - move mouse to card position
                 mouth_is_closed = True
                 if mouth_was_open:
+                    # Mouth just closed after being open (mouse was controlled with tongue)
+                    # Click at current mouse position (where user moved it with tongue)
+                    pyautogui.click(current_mouse_x, current_mouse_y)
+                    print(f"Clicked at current mouse position: ({current_mouse_x}, {current_mouse_y})")
+                    
                     mouth_was_open = False
                     vector_buffer.clear()  # Clear smoothing buffer
                     frame_buffer.clear()  # Clear frame buffer
@@ -327,6 +332,7 @@ while running:
                     current_card = 1  # Reset to card 1 when mouth closes
                     current_mouse_x, current_mouse_y = get_card_position(current_card)
                     pyautogui.moveTo(current_mouse_x, current_mouse_y)
+                    print(f"Moved to card 1 position: ({current_mouse_x}, {current_mouse_y})")
                     clicked_on_open = False  # Reset click flag for next mouth opening
                 
                 mouth_was_closed = True  # Update tracking flag
