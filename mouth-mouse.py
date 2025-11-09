@@ -60,6 +60,8 @@ vector_buffer = []
 frame_buffer = []
 last_tongue_tip = None  # Keep last detection while collecting new frames
 mouth_was_open = False
+mouth_was_closed = True  # Track if mouth was closed in previous frame
+clicked_on_open = False  # Track if we've clicked for this mouth opening event
 current_card = 1  # Track current card (1-4)
 current_mouse_x, current_mouse_y = card_1_x, card_1_y
 pyautogui.moveTo(current_mouse_x, current_mouse_y)
@@ -248,9 +250,24 @@ while running:
             # If mouth is open, detect tongue and control mouse
             if mouth_is_open:
                 mouth_is_closed = False
+                
+                # Detect transition from closed to open (mouth just opened)
+                if mouth_was_closed and not clicked_on_open:
+                    # Click once at current card position
+                    pyautogui.click(current_mouse_x, current_mouse_y)
+                    print(f"Clicked at card position: ({current_mouse_x}, {current_mouse_y})")
+                    
+                    # Move mouse to middle center
+                    pyautogui.moveTo(middle_center_x, middle_center_y)
+                    current_mouse_x, current_mouse_y = middle_center_x, middle_center_y
+                    print(f"Moved to center: ({middle_center_x}, {middle_center_y})")
+                    
+                    clicked_on_open = True  # Mark that we've clicked for this opening
+                
                 # Clear any accumulated key presses when mouth opens
                 key_press_queue.clear()
                 mouth_was_open = True
+                mouth_was_closed = False
                 
                 # Add frame to buffer for multi-frame inference
                 frame_buffer.append(frame.copy())
@@ -310,6 +327,9 @@ while running:
                     current_card = 1  # Reset to card 1 when mouth closes
                     current_mouse_x, current_mouse_y = get_card_position(current_card)
                     pyautogui.moveTo(current_mouse_x, current_mouse_y)
+                    clicked_on_open = False  # Reset click flag for next mouth opening
+                
+                mouth_was_closed = True  # Update tracking flag
                 
                 # Display current card info
                 cv2.putText(frame, f"MOUTH CLOSED - CARD {current_card}", (30, 50),
